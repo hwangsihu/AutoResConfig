@@ -1,19 +1,23 @@
 package dev.rikka.tools.autoresconfig;
 
-import com.android.build.gradle.AppExtension;
-import com.android.build.gradle.api.ApplicationVariant;
-import com.android.builder.core.AbstractProductFlavor;
-import org.gradle.api.GradleException;
+import com.android.build.api.dsl.ApplicationExtension;
+import com.android.build.api.variant.AndroidComponentsExtension;
+import com.android.build.api.variant.Variant;
+
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.logging.Logger;
 import org.gradle.api.logging.Logging;
-import org.gradle.api.tasks.SourceTask;
+import org.gradle.api.tasks.TaskProvider;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @SuppressWarnings("unused")
@@ -27,15 +31,9 @@ public class AutoResConfigPlugin implements Plugin<Project> {
     }
 
     private final Logger logger = Logging.getLogger(AutoResConfigPlugin.class);
-    private final Map<String, Set<String>> modifierCache = new HashMap<>();
 
     private void collectModifiers(File dir, Collection<String> output) throws IOException {
-        if (!dir.exists() || !dir.isDirectory()) {
-            return;
-        }
-
-        logger.debug("AutoResConfig: Collect modifiers from " + dir);
-
+        if (!dir.exists() || !dir.isDirectory()) return;
         try (var stream = Files.list(dir.toPath())) {
             output.addAll(stream
                     .filter(file -> {
@@ -43,9 +41,6 @@ public class AutoResConfigPlugin implements Plugin<Project> {
                             return Files.isDirectory(file)
                                     && file.toFile().getName().startsWith("values-")
                                     && Files.exists(file.resolve("strings.xml"))
-
-                                    // not an empty xml
-                                    // TODO replace with find <string>?
                                     && Files.size(file.resolve("strings.xml")) > 62;
                         } catch (IOException e) {
                             return false;
@@ -58,196 +53,79 @@ public class AutoResConfigPlugin implements Plugin<Project> {
         }
     }
 
-    private Collection<String> collectModifiers(@SuppressWarnings("deprecation") ApplicationVariant variant) {
-        var set = new HashSet<String>();
-        set.add("en");
-
-        Set<File> resDirs = new HashSet<>();
-        variant.getSourceSets().forEach(sourceProvider -> resDirs.addAll(sourceProvider.getResDirectories()));
-
-        for (File dir : resDirs) {
-            Set<String> modifiers = modifierCache.get(dir.getAbsolutePath());
-            if (modifiers != null) {
-                set.addAll(modifiers);
-            }
-        }
-
-        var list = new ArrayList<>(set);
-        list.sort(String.CASE_INSENSITIVE_ORDER);
-        return list;
-    }
-
-    private boolean updateResConfig(@SuppressWarnings("deprecation") ApplicationVariant variant, Collection<String> modifiers) {
-        var mergedFlavor = variant.getMergedFlavor();
-
-        //noinspection deprecation
-        if (mergedFlavor instanceof AbstractProductFlavor) {
-            //noinspection deprecation
-            var flavor = (AbstractProductFlavor) mergedFlavor;
-            flavor.addResourceConfigurations(modifiers);
-            return true;
-        } else {
-            return false;
-        }
-    }
-
     private Collection<String> convertModifiersToLocales(Collection<String> modifiers) {
         var locales = new ArrayList<String>();
-
-        String locale;
         for (String modifier : modifiers) {
+            String locale;
             if (modifier.startsWith("b+")) {
                 String[] names = modifier.substring("b+".length()).split("\\+", 2);
-                if (names.length == 2) {
-                    locale = names[0] + "-" + names[1];
-                } else {
-                    locale = names[0];
-                }
+                locale = names.length == 2 ? names[0] + "-" + names[1] : names[0];
             } else {
                 String[] names = modifier.split("-", 2);
-                if (names.length == 2) {
-                    locale = names[0] + "-" + names[1].substring("r".length());
-                } else {
-                    locale = names[0];
-                }
+                locale = names.length == 2 ? names[0] + "-" + names[1].substring("r".length()) : names[0];
             }
-
             locales.add(locale);
         }
-
         locales.sort(String.CASE_INSENSITIVE_ORDER);
         return locales;
     }
 
     private Collection<String> convertLocalesToDisplayLocales(Collection<String> locales) {
-        var displayLocales = new ArrayList<String>();
-
+        var result = new ArrayList<String>();
         for (String locale : locales) {
-            String displayLocale = displayLocaleMap.get(locale);
-            if (displayLocale == null) {
-                displayLocale = locale;
-            }
-            displayLocales.add(displayLocale);
+            String d = displayLocaleMap.get(locale);
+            result.add(d == null ? locale : d);
         }
-
-        return displayLocales;
+        return result;
     }
 
     @Override
     public void apply(Project project) {
-        var appExtension = project.getExtensions().findByType(AppExtension.class);
-        if (appExtension == null) throw new GradleException("Android application extension not found");
+        var extension = project.getExtensions().create("autoResConfig", AutoResConfigExtension.class);
 
-        var extension = project.getExtensions().create(
-                "autoResConfig", AutoResConfigExtension.class);
-
-        // Build a file path -> locale modifiers cache
-        modifierCache.clear();
-
-        appExtension.getSourceSets().all(sourceSet -> {
-            Set<String> mainModifiers = null;
-
-            logger.info("AutoResConfig: Collect locale modifiers for " + sourceSet.getName());
-
-            for (File dir : sourceSet.getRes().getSrcDirs()) {
-                var absolutePath = dir.getAbsolutePath();
-
-                var set = modifierCache.get(absolutePath);
-                if (set != null) continue;
-
-                set = new HashSet<>();
-                set.add("en");
-
-                modifierCache.put(absolutePath, set);
-
-                try {
-                    collectModifiers(dir, set);
-                } catch (IOException e) {
-                    logger.error("AutoResConfig: Failed to collect modifiers from " + dir, e);
-                }
-
-                if (sourceSet.getName().equals("main")) {
-                    mainModifiers = set;
-                }
+        project.getPlugins().withId("com.android.base", plugin -> {
+            var resDir = project.file("src/main/res");
+            var modifiers = new HashSet<String>();
+            modifiers.add("en");
+            try {
+                collectModifiers(resDir, modifiers);
+            } catch (IOException e) {
+                logger.warn("AutoResConfig: Failed to collect modifiers from " + resDir, e);
             }
-
-            if (sourceSet.getName().equals("main")) {
-                if (mainModifiers != null) {
-                    var list = new ArrayList<>(mainModifiers);
-                    list.sort(String.CASE_INSENSITIVE_ORDER);
-
-                    appExtension.getDefaultConfig().resConfigs(list);
-                    logger.info("AutoResConfig: Update default resConfig " + mainModifiers);
-                } else {
-                    logger.warn("AutoResConfig: mainModifiers is null");
-                }
-            }
-        });
-
-        appExtension.getApplicationVariants().all(variant -> {
-            var variantName = variant.getName();
-            var variantNameCapitalized = Util.capitalize(variantName);
-
-            logger.info("AutoResConfig: Variant " + variantName);
-            logger.info("AutoResConfig: " + extension);
-
-            var modifiers = collectModifiers(variant);
-
-            if (updateResConfig(variant, modifiers)) {
-                logger.info("AutoResConfig: Update resConfig " + modifiers);
-            } else {
-                logger.error("AutoResConfig: Failed to update resConfig");
-            }
-
-            var locales = convertModifiersToLocales(modifiers);
+            var sortedMods = new ArrayList<>(modifiers);
+            sortedMods.sort(String.CASE_INSENSITIVE_ORDER);
+            var locales = convertModifiersToLocales(sortedMods);
             var displayLocales = convertLocalesToDisplayLocales(locales);
-            logger.info("AutoResConfig: Locales " + locales);
-            logger.info("AutoResConfig: Display locales " + displayLocales);
 
-            if (extension.getGenerateClass().get()) {
-                var javaSourceDir = new File(project.getBuildDir(),
-                        String.format("generated/auto_res_config/%s/java", variantName));
+            @SuppressWarnings("unchecked")
+            AndroidComponentsExtension<?, ?, Variant> androidComponents =
+                    (AndroidComponentsExtension<?, ?, Variant>) project.getExtensions().getByType(AndroidComponentsExtension.class);
 
-                var taskName = String.format("generate%sAutoResConfigSource", variantNameCapitalized);
+androidComponents.onVariants(androidComponents.selector().all(), variant -> {
+                var variantName = variant.getName();
+                var variantNameCapitalized = Util.capitalize(variantName);
 
-                var generateJavaTask = project.getTasks().register(taskName,
-                        GenerateJavaTask.class, extension, javaSourceDir, locales, displayLocales);
+                if (extension.getGenerateClass().get()) {
+                    var taskName = "generate" + variantNameCapitalized + "AutoResConfigSource";
+                    TaskProvider<GenerateJavaTask> task = project.getTasks().register(taskName,
+                            GenerateJavaTask.class, extension, locales, displayLocales);
+                    variant.getSources().getJava().addGeneratedSourceDirectory(task, GenerateJavaTask::getOutputDir);
+                }
 
-                variant.registerJavaGeneratingTask(generateJavaTask, javaSourceDir);
+                if (extension.getGenerateRes().get()) {
+                    var taskName = "generate" + variantNameCapitalized + "AutoResConfigRes";
+                    TaskProvider<GenerateResTask> task = project.getTasks().register(taskName,
+                            GenerateResTask.class, extension, locales, displayLocales);
+                    variant.getSources().getRes().addGeneratedSourceDirectory(task, GenerateResTask::getOutputDir);
+                }
 
-                logger.info("AutoResConfig: register " + taskName + " " + javaSourceDir);
-            }
-
-            if (extension.getGenerateRes().get()) {
-                var resDir = new File(project.getBuildDir(),
-                        String.format("generated/auto_res_config/%s/res", variantName));
-
-                var taskName = String.format("generate%sAutoResConfigRes", variantNameCapitalized);
-
-                var generateResTask = project.getTasks().register(taskName,
-                        GenerateResTask.class, extension, resDir, locales, displayLocales);
-
-                variant.registerGeneratedResFolders(
-                        project.files(resDir).builtBy(generateResTask));
-
-                logger.info("AutoResConfig: register " + taskName + " " + resDir);
-            }
-
-            if (extension.getGenerateLocaleConfig().get()) {
-                var resDir = new File(project.getBuildDir(),
-                        String.format("generated/auto_res_config/%s/res", variantName));
-
-                var taskName = String.format("generate%sAutoResConfigLocaleConfigRes", variantNameCapitalized);
-
-                var generateResTask = project.getTasks().register(taskName,
-                        GenerateLocaleConfigResTask.class, resDir, locales, displayLocales);
-
-                variant.registerGeneratedResFolders(
-                        project.files(resDir).builtBy(generateResTask));
-
-                logger.info("AutoResConfig: register " + taskName + " " + resDir);
-            }
+                if (extension.getGenerateLocaleConfig().get()) {
+                    var taskName = "generate" + variantNameCapitalized + "AutoResConfigLocaleConfigRes";
+                    TaskProvider<GenerateLocaleConfigResTask> task = project.getTasks().register(taskName,
+                            GenerateLocaleConfigResTask.class, locales, displayLocales);
+                    variant.getSources().getRes().addGeneratedSourceDirectory(task, GenerateLocaleConfigResTask::getOutputDir);
+                }
+            });
         });
-
     }
 }

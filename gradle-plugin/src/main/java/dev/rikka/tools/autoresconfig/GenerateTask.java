@@ -1,6 +1,8 @@
 package dev.rikka.tools.autoresconfig;
 
 import org.gradle.api.DefaultTask;
+import org.gradle.api.file.DirectoryProperty;
+import org.gradle.api.tasks.OutputDirectory;
 import org.gradle.api.tasks.TaskAction;
 
 import javax.inject.Inject;
@@ -17,32 +19,39 @@ public abstract class GenerateTask extends DefaultTask {
 
     protected final Collection<String> locales;
     protected final Collection<String> displayLocales;
-    private final File dir;
+
+    @OutputDirectory
+    public abstract DirectoryProperty getOutputDir();
 
     @Inject
-    public GenerateTask(File dir, Collection<String> locales, Collection<String> displayLocales) {
+    public GenerateTask(Collection<String> locales, Collection<String> displayLocales) {
         this.locales = locales;
         this.displayLocales = displayLocales;
-        this.dir = dir;
     }
 
     @TaskAction
     public void generate() throws IOException {
-        try {
-            Files.walkFileTree(dir.toPath(), new SimpleFileVisitor<>() {
-                @Override
-                public FileVisitResult postVisitDirectory(Path dir, IOException exc) throws IOException {
-                    Files.delete(dir);
-                    return FileVisitResult.CONTINUE;
-                }
+        File dir = getOutputDir().get().getAsFile();
+        if (dir.exists()) {
+            Path root = dir.toPath();
+            try {
+                Files.walkFileTree(root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                        Files.delete(file);
+                        return FileVisitResult.CONTINUE;
+                    }
 
-                @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
-                    Files.delete(file);
-                    return FileVisitResult.CONTINUE;
-                }
-            });
-        } catch (IOException ignored) {
+                    @Override
+                    public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
+                        if (!d.equals(root)) Files.delete(d);
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+            } catch (IOException ignored) {
+            }
+        } else {
+            Files.createDirectories(dir.toPath());
         }
     }
 
@@ -59,4 +68,3 @@ public abstract class GenerateTask extends DefaultTask {
         }
     }
 }
-

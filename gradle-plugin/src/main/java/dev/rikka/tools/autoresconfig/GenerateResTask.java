@@ -7,29 +7,27 @@ import java.io.PrintStream;
 import java.util.Collection;
 import java.util.stream.Collectors;
 
-public class GenerateResTask extends GenerateTask {
+public abstract class GenerateResTask extends GenerateTask {
 
     private final AutoResConfigExtension extension;
-    private final File file;
 
     @Inject
-    public GenerateResTask(AutoResConfigExtension extension, File dir, Collection<String> locales, Collection<String> displayLocales) {
-        super(dir, locales, displayLocales);
-
+    public GenerateResTask(AutoResConfigExtension extension,
+                           Collection<String> locales, Collection<String> displayLocales) {
+        super(locales, displayLocales);
         this.extension = extension;
-        this.file = new File(dir, "values/arrays.xml");
     }
 
     @Override
     public void generate() throws IOException {
         super.generate();
 
+        File file = new File(getOutputDir().get().getAsFile(), "values/arrays.xml");
         createFile(file);
 
-        var os = new PrintStream(file);
-        write(os);
-        os.flush();
-        os.close();
+        try (PrintStream os = new PrintStream(file)) {
+            write(os);
+        }
     }
 
     public void write(PrintStream os) {

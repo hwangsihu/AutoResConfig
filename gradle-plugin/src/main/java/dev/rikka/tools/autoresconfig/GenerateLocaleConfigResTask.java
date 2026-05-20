@@ -7,27 +7,23 @@ import java.io.PrintStream;
 import java.util.Collection;
 import java.util.stream.Collectors;
 
-public class GenerateLocaleConfigResTask extends GenerateTask {
-
-    private final File file;
+public abstract class GenerateLocaleConfigResTask extends GenerateTask {
 
     @Inject
-    public GenerateLocaleConfigResTask(File dir, Collection<String> locales, Collection<String> displayLocales) {
-        super(dir, locales, displayLocales);
-
-        this.file = new File(dir, "xml/locales_config.xml");
+    public GenerateLocaleConfigResTask(Collection<String> locales, Collection<String> displayLocales) {
+        super(locales, displayLocales);
     }
 
     @Override
     public void generate() throws IOException {
         super.generate();
 
+        File file = new File(getOutputDir().get().getAsFile(), "xml/locales_config.xml");
         createFile(file);
 
-        var os = new PrintStream(file);
-        write(os);
-        os.flush();
-        os.close();
+        try (PrintStream os = new PrintStream(file)) {
+            write(os);
+        }
     }
 
     public void write(PrintStream os) {

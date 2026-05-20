@@ -7,31 +7,29 @@ import java.io.PrintStream;
 import java.util.Collection;
 import java.util.stream.Collectors;
 
-public class GenerateJavaTask extends GenerateTask {
+public abstract class GenerateJavaTask extends GenerateTask {
 
     private final AutoResConfigExtension extension;
-    private final File file;
 
     @Inject
-    public GenerateJavaTask(AutoResConfigExtension extension, File dir,
+    public GenerateJavaTask(AutoResConfigExtension extension,
                             Collection<String> locales, Collection<String> displayLocales) {
-        super(dir, locales, displayLocales);
-
+        super(locales, displayLocales);
         this.extension = extension;
-        this.file = new File(dir, String.format("%s.java",
-                String.join("/", extension.getGeneratedClassFullName().get().split("\\."))));
     }
 
     @Override
     public void generate() throws IOException {
         super.generate();
 
+        String fqcn = extension.getGeneratedClassFullName().get();
+        File file = new File(getOutputDir().get().getAsFile(),
+                String.join("/", fqcn.split("\\.")) + ".java");
         createFile(file);
 
-        var os = new PrintStream(file);
-        write(os);
-        os.flush();
-        os.close();
+        try (PrintStream os = new PrintStream(file)) {
+            write(os);
+        }
     }
 
     public void write(PrintStream os) {
