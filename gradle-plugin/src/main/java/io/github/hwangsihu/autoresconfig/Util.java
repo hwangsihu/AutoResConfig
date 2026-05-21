@@ -1,4 +1,4 @@
-package dev.rikka.tools.autoresconfig;
+package io.github.hwangsihu.autoresconfig;
 
 public class Util {
 

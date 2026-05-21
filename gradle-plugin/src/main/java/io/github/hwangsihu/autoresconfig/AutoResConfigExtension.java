@@ -1,4 +1,4 @@
-package dev.rikka.tools.autoresconfig;
+package io.github.hwangsihu.autoresconfig;
 
 import org.gradle.api.provider.Property;
 
